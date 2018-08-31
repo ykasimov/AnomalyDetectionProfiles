@@ -1,18 +1,6 @@
 import json
-# from json import dumps, loads, JSONEncoder, JSONDecoder
-import signal
-# import pandas
-# import ipwhois
 import sys
-from fileToAnalyze import BINETFLOW, COMPUTERSTOANALYZER
-from WhoisCache import RadpCache
-
-# from aenum import Enum
-
-# import pickle
-# import jsonpickle
-
-import copy
+from argument_parser import parser_data_gathering
 
 SAVECACHE = False
 USEWHOISDATA = False
@@ -20,20 +8,14 @@ USEWHOISDATA = False
 timeIDSInCapture = []
 result = {}
 temp = {}
-whoiscache = RadpCache()
 connectionCache = {}
 
 
-def load_computers_to_analyze_from_file():
-    ips = set()
-    file = open(COMPUTERSTOANALYZER, 'r')
-    for line in file:
-        ip = line.split(':')[0]
-        ips.add(ip)
-    return ips
+def load_computers_to_analyze_from_file(parameters):
+    return parameters.ip
 
 
-def intializeComputersToAnalyze(ips):
+def intialize_computers_to_analyze(ips):
     for ip in ips:
         result[ip] = {}
         result[ip]['time'] = {}
@@ -44,7 +26,7 @@ def intializeComputersToAnalyze(ips):
         initializeTempHourDict(temp[ip])
 
 
-def fillFeaturesClassFromTempClass(time):
+def fill_features_class_from_temp_class(time):
     if not time:
         return
     dataDateID = time.split(' ')[0]
@@ -72,24 +54,24 @@ def fillFeaturesClassFromTempClass(time):
             result[ip]['time'][dataDateID][dataHourID] = ipfeaturesTimeDict
 
 
-def initializeTempHourDict(tempDict):
-    tempDict['hoursummary'] = {}
-    tempDict['hoursummary']['numberOfIPFlows'] = 0
+def initializeTempHourDict(temp_dect):
+    temp_dect['hoursummary'] = {}
+    temp_dect['hoursummary']['numberOfIPFlows'] = 0
 
-    initializeNumberFeatureAsServerAsClient(tempDict['hoursummary'], 'NumberOfIPFlows')
-    initializeNumberFeatureAsServerAsClient(tempDict['hoursummary'], 'TotalNumberOfTransferedData')
+    initializeNumberFeatureAsServerAsClient(temp_dect['hoursummary'], 'NumberOfIPFlows')
+    initializeNumberFeatureAsServerAsClient(temp_dect['hoursummary'], 'TotalNumberOfTransferedData')
 
-    initializeDictFeatureAsServerAsClient(tempDict, 'DictOfConnections')
-    initializeDictFeatureAsServerAsClient(tempDict, 'DictNumberOfDistinctCountries')
-    initializeDictFeatureAsServerAsClient(tempDict, 'DictNumberOfDistinctOrganizations')
-    initializeDictFeatureAsServerAsClient(tempDict, 'DictClassBnetworks')
+    initializeDictFeatureAsServerAsClient(temp_dect, 'DictOfConnections')
+    initializeDictFeatureAsServerAsClient(temp_dect, 'DictNumberOfDistinctCountries')
+    initializeDictFeatureAsServerAsClient(temp_dect, 'DictNumberOfDistinctOrganizations')
+    initializeDictFeatureAsServerAsClient(temp_dect, 'DictClassBnetworks')
 
-    initializeDictFeatureAsServerAsClient(tempDict, 'PAPAconections')
+    initializeDictFeatureAsServerAsClient(temp_dect, 'PAPAconections')
 
-    initializePortFeatures(tempDict)
+    initializePortFeatures(temp_dect)
 
-    initializeDictFeatureAsServerAsClient(tempDict, 'DestinationPortDictIPsTCP')
-    initializeDictFeatureAsServerAsClient(tempDict, 'DestinationPortDictIPsUDP')
+    initializeDictFeatureAsServerAsClient(temp_dect, 'DestinationPortDictIPsTCP')
+    initializeDictFeatureAsServerAsClient(temp_dect, 'DestinationPortDictIPsUDP')
 
 
 def initializeDictFeatureAsServerAsClient(dict, name):
@@ -108,50 +90,42 @@ def initializeNumberFeatureAsServerAsClient(dict, name):
     dict['server' + name + 'NotEstablished'] = 0
 
 
-def getCountryFromWhoisCache(ip):
-    data = whoiscache.get_country_for_ip(ip)
-    return data
-
-
-def processLine(lineDict, lastTimeID):
-    time = lineDict['StartTime']
-    dataDateID = time.split()[0]
-    dataHourID = time.split()[1].split(':')[0]
-    data5MinID = time.split()[1].split(':')[1]
-    dataHourID = dataHourID + ' ' + str(int(data5MinID) / 5)
-    actualDataId = dataDateID + ' ' + dataHourID + ' ' + str(int(data5MinID) / 5)
-    if (actualDataId != lastTimeID):
-        print(dataHourID)
-        timeIDSInCapture.append(dataHourID)
-        fillFeaturesClassFromTempClass(lastTimeID)
+def processLine(line_dict, last_time_id, time_window=5):
+    time = line_dict['StartTime']
+    data_date_id = time.split()[0]
+    data_hour_id = time.split()[1].split(':')[0]
+    data_min_id = time.split()[1].split(':')[1]
+    data_hour_id = f'{data_hour_id} {int(data_min_id)//(time_window)}'
+    # data_hour_id = data_hour_id + ' ' + str(int(dataMinID) / time_window)
+    actual_data_id = data_date_id + ' ' + data_hour_id + ' ' + str(int(data_min_id) // time_window)
+    if actual_data_id != last_time_id:
+        print(data_hour_id)
+        timeIDSInCapture.append(data_hour_id)
+        fill_features_class_from_temp_class(last_time_id)
         for ip in temp:
             initializeTempHourDict(temp[ip])
 
-    dur = lineDict['Dur']
-    protocol = lineDict['Proto']
-    ipFrom = lineDict['SrcAddr']
-    sourcePort = lineDict['Sport']
-    arrow = stripSpacesFromConnection(lineDict['Dir'])
-    ipTo = lineDict['DstAddr']
-    dstPort = lineDict['Dport']
-    connectionInformationState = lineDict['State']
-    sTos = lineDict['sTos']
-    dTos = lineDict['dTos']
-    totalPakets = float(lineDict['TotPkts'])
-    totBytes = float(lineDict['TotBytes'])
-    srcBytes = float(lineDict['SrcBytes'])
-    label = lineDict['Label']
+    dur = line_dict['Dur']
+    protocol = line_dict['Proto']
+    ip_from = line_dict['SrcAddr']
+    source_port = line_dict['Sport']
+    ip_to = line_dict['DstAddr']
+    dst_port = line_dict['Dport']
+    connection_information_state = line_dict['State']
+    total_pakets = float(line_dict['TotPkts'])
+    tot_bytes = float(line_dict['TotBytes'])
+    src_bytes = float(line_dict['SrcBytes'])
 
-    if (ipFrom in result):
-        addFeaturesForIP('client', ipFrom, ipTo, lineDict, dur, protocol, sourcePort, dstPort,
-                         connectionInformationState, totalPakets, totBytes, srcBytes)
-    if (ipTo in result):
-        addFeaturesForIP('server', ipTo, ipFrom, lineDict, dur, protocol, sourcePort, dstPort,
-                         connectionInformationState, totalPakets, totBytes, srcBytes)
+    if ip_from in result:
+        addFeaturesForIP('client', ip_from, ip_to, line_dict, dur, protocol, source_port, dst_port,
+                         connection_information_state, total_pakets, tot_bytes, src_bytes)
+    if ip_to in result:
+        addFeaturesForIP('server', ip_to, ip_from, line_dict, dur, protocol, source_port, dst_port,
+                         connection_information_state, total_pakets, tot_bytes, src_bytes)
 
     # TODO deal with _RA
     # print (line)
-    return actualDataId
+    return actual_data_id
 
 
 # ipDict is ip where the features are added
@@ -163,14 +137,10 @@ def addFeaturesForIP(clientorserver, ipDict, ipTarget, lineDict, dur, protocol, 
     # ipFeaturesTemp['hoursummary']['numberOfIPFlows'] = ipFeaturesTemp['hoursummary']['numberOfIPFlows'] + 1
     # per flow consumer/producer ratio
     result[ipDict]['perflow']['consumerproducerratio'].add(srcBytes / totBytes)
-    if (detectConnection(connectionInformationState)):
+    if detectConnection(connectionInformationState):
         # ipFeaturesTemp['clientDictIPSContacted'].add (ipTo)
         # addFeaturesToDict (ipFeaturesTemp, 'clientDictIPSContacted', ipTarget, 1)
-        if USEWHOISDATA:
-            country = getCountryFromWhoisCache(ipTarget)
-            addFeaturesToDict(ipFeaturesTemp, clientorserver + 'DictNumberOfDistinctCountriesEstablished', country, 1)
-            addFeaturesToDict(ipFeaturesTemp, clientorserver + 'DictNumberOfDistinctOrganizationsEstablished',
-                              whoiscache.get_organization_of_ip(ipTarget), 1)
+
 
         classB = ipTarget.split('.')[0] + '.' + ipTarget.split('.')[1]
         addFeaturesToDict(ipFeaturesTemp, clientorserver + 'DictClassBnetworksEstablished', classB, 1)
@@ -179,7 +149,7 @@ def addFeaturesForIP(clientorserver, ipDict, ipTarget, lineDict, dur, protocol, 
                 clientorserver + 'TotalNumberOfTransferedDataEstablished'] + totBytes
         fillDataToPortFeatures(clientorserver, protocol, ipFeaturesTemp, dstPort, ipTarget, sourcePort, totBytes,
                                totalPakets, lineDict, 'Established')
-    elif (detectConnectionAttemptWithNoAnswer(connectionInformationState)):
+    elif detectConnectionAttemptWithNoAnswer(connectionInformationState):
         addFeaturesToDict(ipFeaturesTemp, clientorserver + 'DictOfConnectionsNotEstablished', ipTarget, 1)
         # TODO Ask sebas if not answered connections should be in the histograms, make the two colors mode for this
         fillDataToPortFeatures(clientorserver, protocol, ipFeaturesTemp, dstPort, ipTarget, sourcePort, totBytes,
@@ -187,7 +157,7 @@ def addFeaturesForIP(clientorserver, ipDict, ipTarget, lineDict, dur, protocol, 
         # TODO Check log of not used lines that should be catched by this
 
 
-    elif (detectPAPAsituation(connectionInformationState)):
+    elif detectPAPAsituation(connectionInformationState):
         if detectEndingConection(connectionInformationState):
             # print "Connection ended"
             pass
@@ -197,7 +167,7 @@ def addFeaturesForIP(clientorserver, ipDict, ipTarget, lineDict, dur, protocol, 
             else:
                 ipFeaturesTemp[clientorserver + 'PAPAconectionsEstablished'][ipTarget] = 1
     else:
-        print (convertDictToLine(lineDict))
+        print(convertDictToLine(lineDict))
 
     ipFeaturesTemp['hoursummary']['numberOfIPFlows'] = ipFeaturesTemp['hoursummary']['numberOfIPFlows'] + 1
 
@@ -273,24 +243,24 @@ def addPortDictIPSToDict(ipFeaturesTemp, dictname, port, ip):
 
 def detectConnection(connectionInformation):
     # TODO : For the UDP
-    if (connectionInformation == 'CON' or connectionInformation == 'EST'):  # CON and EST for TCP, CON for UDP
+    if (connectionInformation == 'CON') or (connectionInformation == 'EST'):  # CON and EST for TCP, CON for UDP
         return True
     # if (connectionInformation == 'URP'):    #ASK SEBAS FOR THIS, this is icmp protocol
     #    return True
-    if (len(connectionInformation.split('_')) != 2):
+    if len(connectionInformation.split('_')) != 2:
         return False
     connectionInformationFrom = connectionInformation.split('_')[0]
     connectionInformationTo = connectionInformation.split('_')[1]
     if (
-                        'S' in connectionInformationFrom and 'S' in connectionInformationTo and 'A' in connectionInformationTo):  # maybe add to the dict of opened connection if there is no fin
+            'S' in connectionInformationFrom and 'S' in connectionInformationTo and 'A' in connectionInformationTo):  # maybe add to the dict of opened connection if there is no fin
         return True
     return False
 
 
 def detectConnectionAttemptWithNoAnswer(connectionInformation):
-    if (connectionInformation == 'REQ' or connectionInformation == 'INT'):  # for UDP
+    if connectionInformation == 'REQ' or connectionInformation == 'INT':  # for UDP
         return True
-    if (len(connectionInformation.split('_')) != 2):
+    if len(connectionInformation.split('_')) != 2:
         return False
     # for TCP
     connectionInformationFrom = connectionInformation.split('_')[0]
@@ -298,28 +268,30 @@ def detectConnectionAttemptWithNoAnswer(connectionInformation):
     if ('S' in connectionInformationFrom and connectionInformationTo == ''):  # Absolutely no answer
         return True
     if (
-                        'S' in connectionInformationFrom and 'R' in connectionInformationTo and 'A' in connectionInformationTo):  # Reset Acknowledged
+            'S' in connectionInformationFrom and 'R' in connectionInformationTo and 'A' in connectionInformationTo):  # Reset Acknowledged
         return True
     return False
 
 
 def detectPAPAsituation(connectionInformation):
-    if (len(connectionInformation.split('_')) != 2):
+    if len(connectionInformation.split('_')) != 2:
         return False
     connectionInformationFrom = connectionInformation.split('_')[0]
     connectionInformationTo = connectionInformation.split('_')[1]
-    if ('A' in connectionInformationFrom and 'A' in connectionInformationTo):
+    if ('A' in connectionInformationFrom) and ('A' in connectionInformationTo):
         return True
     return False
 
 
 def detectEndingConection(connectionInformation):
-    if (len(connectionInformation.split('_')) != 2):
+    if len(connectionInformation.split('_')) != 2:
         return False
     connectionInformationFrom = connectionInformation.split('_')[0]
     connectionInformationTo = connectionInformation.split('_')[1]
-    if (
-                            'F' in connectionInformationFrom or 'F' in connectionInformationTo or 'R' in connectionInformationFrom or 'R' in connectionInformationTo):
+    if (('F' in connectionInformationFrom)
+            or ('F' in connectionInformationTo)
+            or ('R' in connectionInformationFrom)
+            or ('R' in connectionInformationTo)):
         return True
     return False
 
@@ -337,21 +309,22 @@ def stripSpacesFromConnection(string):
 def convertLineToDict(line):
     # StartTime, Dur, Proto, SrcAddr, Sport, Dir, DstAddr, Dport, State, sTos, dTos, TotPkts, TotBytes, SrcBytes, Label
     lineDict = {}
-    lineDict['StartTime'] = line.split(',')[0]
-    lineDict['Dur'] = line.split(',')[1]
-    lineDict['Proto'] = line.split(',')[2]
-    lineDict['SrcAddr'] = line.split(',')[3]
-    lineDict['Sport'] = line.split(',')[4]
-    lineDict['Dir'] = line.split(',')[5]
-    lineDict['DstAddr'] = line.split(',')[6]
-    lineDict['Dport'] = line.split(',')[7]
-    lineDict['State'] = line.split(',')[8]
-    lineDict['sTos'] = line.split(',')[9]
-    lineDict['dTos'] = line.split(',')[10]
-    lineDict['TotPkts'] = line.split(',')[11]
-    lineDict['TotBytes'] = line.split(',')[12]
-    lineDict['SrcBytes'] = line.split(',')[13]
-    lineDict['Label'] = line.split(',')[14]
+    components = line.split(',')
+    lineDict['StartTime'] = components[0]
+    lineDict['Dur'] = components[1]
+    lineDict['Proto'] = components[2]
+    lineDict['SrcAddr'] = components[3]
+    lineDict['Sport'] = components[4]
+    lineDict['Dir'] = components[5]
+    lineDict['DstAddr'] = components[6]
+    lineDict['Dport'] = components[7]
+    lineDict['State'] = components[8]
+    lineDict['sTos'] = components[9]
+    lineDict['dTos'] = components[10]
+    lineDict['TotPkts'] = components[11]
+    lineDict['TotBytes'] = components[12]
+    lineDict['SrcBytes'] = components[13]
+    lineDict['Label'] = components[14]
     return lineDict
 
 
@@ -362,14 +335,14 @@ def convertDictToLine(lineDict):
            lineDict['TotBytes'] + ',' + lineDict['SrcBytes'] + ',' + lineDict['Label']
 
 
-def gatherData():
-    with open(BINETFLOW, 'r') as f:
+def gatherData(train_file):
+    with open(train_file, 'r') as f:
         next(f)
         lastHourID = ""
         for line in f:
             lineDict = convertLineToDict(line)
             lastHourID = processLine(lineDict, lastHourID)
-        fillFeaturesClassFromTempClass(lastHourID)
+        fill_features_class_from_temp_class(lastHourID)
 
 
 def getTimeIDSInCapture():
@@ -393,97 +366,16 @@ def humanreadabledump(obj):
     return obj.__dict__
 
 
-def signal_handler(signal, frame):
-    if SAVECACHE:
-        print ('You pressed Ctrl+C! Wait till caches are saved to the disc please, program will exit afterwards')
-        with open('whoiscahce.json', 'w') as fp:
-            json.dump(whoiscache.get_whois_cache(), fp, default=dumper, indent=2)
-        with open('country_cache.json', 'w') as fp:
-            json.dump(whoiscache.get_country_cache(), fp, default=dumper, indent=2)
-        print('Exiting now!')
-    sys.exit(0)
-
-
-def generate_profile_from_weblogs(weblogs, ips):
-    load_whois_cache_from_file()
-    intializeComputersToAnalyze(ips)
-    lastHourID = ""
-    for weblog in weblogs:
-        lineDict = weblog.attributes
-        lastHourID = processLine(lineDict, lastHourID)
-    fillFeaturesClassFromTempClass(lastHourID)
-    if SAVECACHE:
-        save_whois_cache_to_file()
-    return result
-
-
-def save_whois_cache_to_file():
-    with open('whoiscahce.json', 'w') as fp:
-        json.dump(whoiscache.get_whois_cache(), fp, default=dumper, indent=2)
-
-
-def load_whois_cache_from_file():
-    try:
-        with open('whoiscahce.json') as data_file:
-            whoiscache.whois_cache = json.load(data_file)
-    except IOError:
-        print('whoiscahce not found')
-
-
 if __name__ == "__main__":
-    # TODO Add option to load whois data on the background to speed the creation of the profile
-    # TODO Add branch for devel
-    signal.signal(signal.SIGINT, signal_handler)
-    try:
-        with open('country_cache.json') as data_file:
-            whoiscache.whois_country_cache = json.load(data_file)
-    except IOError:
-        print('country cache not found')
-    ips = load_computers_to_analyze_from_file()
-    intializeComputersToAnalyze(ips)
-    gatherData()
+    parameters = parser_data_gathering\
+        .parse_args(sys.argv[1:])
 
-    # Using Data frame for generating json is no longer needed
+    ips = load_computers_to_analyze_from_file(parameters)
+    intialize_computers_to_analyze(ips)
+    gatherData(parameters.train_file)
 
-    # dataFrame = pandas.DataFrame.from_dict(result)
-    # resjson = dataFrame.to_json(orient='records', lines=True)
-    # dataFramedict = dataFrame.to_dict(orient='records')
-    # with open('test.json','w') as fp:
-    #     fp.write(resjson)
     print('printed lines are not taken in account for profile, my TODO is to include them all')
     print('saving results')
-    with open('result.json', 'w') as fp:
+    with open(parameters.file, 'w') as fp:
         json.dump(result, fp, default=dumper)
-    if SAVECACHE:
-        save_whois_cache_to_file()
-        with open('country_cache.json', 'w') as fp:
-            json.dump(whoiscache.get_country_cache(), fp, default=dumper, indent=2)
     print('done')
-    # naplot = result['147.32.80.9']['hours']['date:2016/10/05 hour:00']['clientSourcePortNumberOfFlowsUDP']
-    # x = []
-    # y = []
-    # for key in naplot:
-    #     x.append(key)
-    #     y.append(naplot[key])
-    # import numpy as np
-    # import matplotlib.mlab as mlab
-    # import matplotlib.pyplot as plt
-    #
-    # mu, sigma = 100, 15
-    # #x = mu + sigma * np.random.randn (10000)
-    #
-    # # the histogram of the data
-    # n, bins, patches = plt.hist (x, 50, normed=1, facecolor='green', alpha=0.75)
-    #
-    # # add a 'best fit' line
-    # #y = mlab.normpdf (bins, mu, sigma)
-    # y = np.random.randn (len(x))
-    # l = plt.plot (bins, y, 'r--', linewidth=1)
-    #
-    # plt.xlabel ('Smarts')
-    # plt.ylabel ('Probability')
-    # plt.title (r'$\mathrm{Histogram\ of\ IQ:}\ \mu=100,\ \sigma=15$')
-    # plt.axis ([0, 65536, 0, 0.03])
-    # plt.grid (True)
-    #
-    # plt.show ()
