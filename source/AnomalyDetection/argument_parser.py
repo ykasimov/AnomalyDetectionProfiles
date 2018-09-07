@@ -9,5 +9,11 @@ parser_training = argparse.ArgumentParser(description='Anomaly detection paramet
 parser_training.add_argument('-normal', dest='normal_data', required=True)
 parser_training.add_argument('-valid', dest='validation_data', required=True)
 parser_training.add_argument('-algorithm', dest='algorithm', default='OCSVM', choices=['OCSVM', 'LOF'])
+parser_training.add_argument('-save', dest='models_path', default='models' )
+
+
+parser_inference = argparse.ArgumentParser(description='Anomaly detection inference parser')
+parser_inference.add_argument('-models', dest='models', required=True)
+parser_inference.add_argument('-profiles', dest='profiles', required=True)
 
 

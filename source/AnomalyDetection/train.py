@@ -7,6 +7,9 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split, ParameterGrid
 from sklearn.svm import OneClassSVM
 import pandas as pd
+import pickle
+import os
+from utils import get_data, get_evaluation_matrix, majority_voting
 
 
 def create_features(histogram):
@@ -57,28 +60,14 @@ def compute_precision_recall_accuracy(true_positive, false_positive, true_negati
     return precision, recall, accuracy
 
 
-def get_evaluation_matrix(labels, predicted):
-    anomaly_range = (labels == -1)
-    benign_range = (labels == 1)
-    true_positive = np.sum(predicted[anomaly_range] == labels[anomaly_range])
-    false_positive = np.sum(predicted[benign_range] != labels[benign_range])
-    true_negative = np.sum(predicted[benign_range] == labels[benign_range])
-    false_negative = np.sum(predicted[anomaly_range] != labels[anomaly_range])
-    return true_positive, false_positive, true_negative, false_negative
-
-
-def get_data(file, feature_names):
-    with open(file, 'r') as f:
-        data = json.load(f)
-    ip = list(data.keys())[0]
-    profile = data[ip]['time']
-    features_per_feature = {feat: [] for feat in feature_names}
-    for date, day_profile in profile.items():
-        for time_window, histogram in day_profile.items():
-            [features_per_feature[feat].append(create_features(histogram[feat])) for feat in feature_names]
-    for feat in feature_names:
-        features_per_feature[feat] = np.array(features_per_feature[feat])
-    return features_per_feature
+# def get_evaluation_matrix(labels, predicted):
+#     anomaly_range = (labels == -1)
+#     benign_range = (labels == 1)
+#     true_positive = np.sum(predicted[anomaly_range] == labels[anomaly_range])
+#     false_positive = np.sum(predicted[benign_range] != labels[benign_range])
+#     true_negative = np.sum(predicted[benign_range] == labels[benign_range])
+#     false_negative = np.sum(predicted[anomaly_range] != labels[anomaly_range])
+#     return true_positive, false_positive, true_negative, false_negative
 
 
 def _ocvsm_param_search(train_data, validation_data, validation_labels):
@@ -129,12 +118,9 @@ def _select_params_from_results(experiment_results):
         tmp = experiment_results.unstack(1)[feature]
         tpr_max_val_fpr_less_001 = tmp[tmp['FPR'] < 0.01]['TPR'].max()
         tpr_max_val_fpr_min = tmp[tmp['FPR'] == tmp['FPR'].min()]['TPR'].max()
-        # print('=====================\n', feature)
         if tpr_max_val_fpr_min > min_tpr:
-            # print(tmp[tmp['FPR'] == tmp['FPR'].min()][['FPR', 'TPR', 'precision', 'recall']])
             params = tmp[tmp['FPR'] == tmp['FPR'].min()]['TPR'].idxmax().split(', ')
         elif tpr_max_val_fpr_less_001 > tpr_max_val_fpr_min:
-            # print(tmp[tmp['FPR'] < 0.01][['FPR', 'TPR', 'precision', 'recall']])
             params = tmp[tmp['FPR'] < 0.01]['TPR'].idxmax().split(', ')
         else:
             params = tmp[tmp['FPR'] == tmp['FPR'].min()]['TPR'].idxmax().split(', ')
@@ -144,8 +130,7 @@ def _select_params_from_results(experiment_results):
             p_value = float(p[1])
             model_params[feature][p_name] = p_value
     return model_params
-    # for feature in global_features:
-    #     print(feature, model_params[feature])
+
 
 
 def _train_ocsvm(train, params):
@@ -196,21 +181,33 @@ def split_train_validation_test(normal_data, malware_data, features):
     return (X_train, train_labels), (X_val, val_labels), (X_test, test_labels)
 
 
+
+
 def test_models(test_data, label_test, models):
+    predictions = []
     for feature_name in global_features:
         X_test = test_data[feature_name]
-        y = label_test[feature_name]
-        predictions = models[feature_name].predict(X_test)
+        y = label_test
+        prediction = models[feature_name].predict(X_test)
+        predictions.append(prediction)
         true_positive, false_positive, true_negative, false_negative = \
-            get_evaluation_matrix(labels=y, predicted=predictions)
+            get_evaluation_matrix(labels=y, predicted=prediction)
         print(f'{feature_name}: '
-              f'FPR={false_positive/(false_positive + true_negative)}'
-              f'TPR={true_positive / (true_positive + false_negative)}')
+              f'FPR= {false_positive/(false_positive + true_negative)} '
+              f'TPR= {true_positive / (true_positive + false_negative)}')
+
+    final_prediction = majority_voting(predictions)
+    true_positive, false_positive, true_negative, false_negative = \
+        get_evaluation_matrix(labels=label_test, predicted=final_prediction)
+
+    fpr = false_positive / (false_positive + true_negative)
+    tpr = true_positive / (true_positive + false_negative)
+    print(f'Ensemble evaluation\nFPR ensemble: {fpr}\nTPR ensebmle: {tpr}')
 
 
-def train(normal_data, malware_data, features, algorithm='OCSVM'):
-    train, validation, test = split_train_validation_test(normal_data, malware_data, features)
-    X_train = train[0]
+def train(normal_data, malware_data, features, algorithm='OCSVM', save_params=False):
+    train_data, validation, test = split_train_validation_test(normal_data, malware_data, features)
+    X_train = train_data[0]
     X_val = validation[0]
     X_test = test[0]
     validation_labels = validation[1]
@@ -222,8 +219,9 @@ def train(normal_data, malware_data, features, algorithm='OCSVM'):
         X_val[feat] = scalers[feat].transform(X_val[feat])
         X_test[feat] = scalers[feat].transform(X_test[feat])
     if algorithm == 'OCSVM':
-        # experiment_results = _ocvsm_param_search(X_train, X_val, validation_labels)
-        experiment_results = pd.read_pickle('test.pkl')
+        experiment_results = _ocvsm_param_search(X_train, X_val, validation_labels)
+        # experiment_results = pd.read_pickle('t
+        # est.pkl')
         params = _select_params_from_results(experiment_results)
         models = _train_ocsvm(X_train, params)
         test_models(X_test, test_labels, models)
@@ -232,13 +230,19 @@ def train(normal_data, malware_data, features, algorithm='OCSVM'):
         raise NotImplementedError('Available algorithms: [OCSVM, LOF]')
 
 
+def _save_models(models, folder):
+    if not os.path.isdir(folder):
+        os.makedirs(folder)
+    for feature, model in models.items():
+        path = f'{folder}/{feature}_model.pkl'
+        with open(path, 'wb') as f:
+            pickle.dump(model, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
 if __name__ == '__main__':
-    # 1. file with normal
-    # 2. file with mix
     import time
 
     time.sleep(5)
-    # print('starting the training')
     parameters = parser_training.parse_args(sys.argv[1:])
     normal_training = get_data(parameters.normal_data, feature_names=global_features)
     print('normal data are prepared')
@@ -246,7 +250,4 @@ if __name__ == '__main__':
     print('mixed data are prepared')
     models = train(normal_training, malware_data, features=global_features)
 
-    # experiment_results.to_pickle('test.pkl')
-    # experiment_results = pd.read_pickle('test.pkl')
-    # params = _select_params_from_results(experiment_results)
-    print(models)
+    _save_models(models, parameters.models_path)

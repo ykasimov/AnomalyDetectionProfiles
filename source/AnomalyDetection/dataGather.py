@@ -99,7 +99,7 @@ def processLine(line_dict, last_time_id, time_window=5):
     # data_hour_id = data_hour_id + ' ' + str(int(dataMinID) / time_window)
     actual_data_id = data_date_id + ' ' + data_hour_id + ' ' + str(int(data_min_id) // time_window)
     if actual_data_id != last_time_id:
-        print(data_hour_id)
+        # print(data_hour_id)
         timeIDSInCapture.append(data_hour_id)
         fill_features_class_from_temp_class(last_time_id)
         for ip in temp:
@@ -167,7 +167,8 @@ def addFeaturesForIP(clientorserver, ipDict, ipTarget, lineDict, dur, protocol, 
             else:
                 ipFeaturesTemp[clientorserver + 'PAPAconectionsEstablished'][ipTarget] = 1
     else:
-        print(convertDictToLine(lineDict))
+        pass
+        # print(convertDictToLine(lineDict))
 
     ipFeaturesTemp['hoursummary']['numberOfIPFlows'] = ipFeaturesTemp['hoursummary']['numberOfIPFlows'] + 1
 
@@ -211,7 +212,8 @@ def fillDataToPortFeatures(clientorserver, protocol, ipFeaturesTemp, dstPort, ip
         addAllPortFeaturesToDict(ipFeaturesTemp, clientorserver, protocol, sourcePort, dstPort, totBytes, totalPakets,
                                  answeredornot)
     else:
-        print(convertDictToLine(lineDict))
+        pass
+        # print(convertDictToLine(lineDict))
 
 
 def addAllPortFeaturesToDict(ipFeaturesTemp, source, protocol, sourcePort, destinationPort, totalBytes, totalPackets,
