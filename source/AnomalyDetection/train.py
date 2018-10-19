@@ -101,8 +101,7 @@ def _ocvsm_param_search(train_data, validation_data, validation_labels):
             experiment_results.loc[(kernel_string, 'precision'), feature_name] = precision
             experiment_results.loc[(kernel_string, 'recall'), feature_name] = recall
             experiment_results.loc[(kernel_string, 'accuracy'), feature_name] = accuracy
-            experiment_results.loc[(kernel_string, ''
-                                                   'FPR'), feature_name] = false_positive / (
+            experiment_results.loc[(kernel_string, 'FPR'), feature_name] = false_positive / (
                     false_positive + true_negative)
             experiment_results.loc[(kernel_string, 'TPR'), feature_name] = true_positive / (
                     true_positive + false_negative)
@@ -130,7 +129,6 @@ def _select_params_from_results(experiment_results):
             p_value = float(p[1])
             model_params[feature][p_name] = p_value
     return model_params
-
 
 
 def _train_ocsvm(train, params):
@@ -181,8 +179,6 @@ def split_train_validation_test(normal_data, malware_data, features):
     return (X_train, train_labels), (X_val, val_labels), (X_test, test_labels)
 
 
-
-
 def test_models(test_data, label_test, models):
     predictions = []
     for feature_name in global_features:
@@ -205,7 +201,7 @@ def test_models(test_data, label_test, models):
     print(f'Ensemble evaluation\nFPR ensemble: {fpr}\nTPR ensebmle: {tpr}')
 
 
-def train(normal_data, malware_data, features, algorithm='OCSVM', save_params=False):
+def train(normal_data, malware_data, features, algorithm='OCSVM', params=None, validate=False):
     train_data, validation, test = split_train_validation_test(normal_data, malware_data, features)
     X_train = train_data[0]
     X_val = validation[0]
@@ -219,13 +215,14 @@ def train(normal_data, malware_data, features, algorithm='OCSVM', save_params=Fa
         X_val[feat] = scalers[feat].transform(X_val[feat])
         X_test[feat] = scalers[feat].transform(X_test[feat])
     if algorithm == 'OCSVM':
-        experiment_results = _ocvsm_param_search(X_train, X_val, validation_labels)
-        # experiment_results = pd.read_pickle('t
-        # est.pkl')
-        params = _select_params_from_results(experiment_results)
+        if not params:
+            experiment_results = _ocvsm_param_search(X_train, X_val, validation_labels)
+            params = _select_params_from_results(experiment_results)
+
         models = _train_ocsvm(X_train, params)
-        test_models(X_test, test_labels, models)
-        return models
+        if validate:
+            test_models(X_test, test_labels, models)
+        return params, models
     else:
         raise NotImplementedError('Available algorithms: [OCSVM, LOF]')
 
@@ -248,6 +245,14 @@ if __name__ == '__main__':
     print('normal data are prepared')
     malware_data = get_data(parameters.validation_data, feature_names=global_features)
     print('mixed data are prepared')
-    models = train(normal_training, malware_data, features=global_features)
+    model_params = None
+    if parameters.params:
+        with open(parameters.params, 'r') as f:
+            model_params = json.load(f)
+    params, models = train(normal_training, malware_data, features=global_features, params=model_params, validate=False)
+    save_params = False
+    if save_params:
+        with open(f'{parameters.models_path}/params.json', 'w') as f:
+            json.dump(params, f)
 
     _save_models(models, parameters.models_path)
