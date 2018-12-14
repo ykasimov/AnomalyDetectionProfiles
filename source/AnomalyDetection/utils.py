@@ -25,17 +25,28 @@ def create_features(histogram):
 
 
 def get_data(file, feature_names):
+    def create_date(day, time_window):
+        time_window_parts = time_window.split(' ')
+        padding_zero = ''
+        if len(time_window_parts[1])<2:
+            padding_zero = '0'
+        return (f'{day} {time_window_parts[0]}:'
+                f'{padding_zero}'
+                f'{int(time_window_parts[1])*5}:00')
+
     with open(file, 'r') as f:
         data = json.load(f)
     ip = list(data.keys())[0]
     profile = data[ip]['time']
     features_per_feature = {feat: [] for feat in feature_names}
+    time_windows_dates = []
     for date, day_profile in profile.items():
         for time_window, histogram in day_profile.items():
             [features_per_feature[feat].append(create_features(histogram[feat])) for feat in feature_names]
+            time_windows_dates.append(create_date(date, time_window))
     for feat in feature_names:
         features_per_feature[feat] = np.array(features_per_feature[feat])
-    return features_per_feature
+    return features_per_feature, time_windows_dates
 
 
 def get_evaluation_matrix(labels, predicted):
