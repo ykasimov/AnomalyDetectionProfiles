@@ -6,6 +6,7 @@ from features import global_features
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split, ParameterGrid
 from sklearn.svm import OneClassSVM
+from sklearn.neighbors import LocalOutlierFactor
 import pandas as pd
 import pickle
 import os
@@ -60,19 +61,51 @@ def compute_precision_recall_accuracy(true_positive, false_positive, true_negati
     return precision, recall, accuracy
 
 
-# def get_evaluation_matrix(labels, predicted):
-#     anomaly_range = (labels == -1)
-#     benign_range = (labels == 1)
-#     true_positive = np.sum(predicted[anomaly_range] == labels[anomaly_range])
-#     false_positive = np.sum(predicted[benign_range] != labels[benign_range])
-#     true_negative = np.sum(predicted[benign_range] == labels[benign_range])
-#     false_negative = np.sum(predicted[anomaly_range] != labels[anomaly_range])
-#     return true_positive, false_positive, true_negative, false_negative
+def _lof_param_search(train_data, validation_data, validation_labels):
+    experiment_results = pd.DataFrame(columns=['parameters', 'evaluation'] + global_features)
+    experiment_results.set_index(['parameters', 'evaluation'], inplace=True)
+
+    for feature_name in global_features:
+        X_train = train_data[feature_name]
+        X_val = validation_data[feature_name]
+        for k in range(1, 11):
+            for contamination in np.linspace(0.01, 0.1, 50):
+                model = LocalOutlierFactor(n_neighbors=k, contamination=contamination, n_jobs=-1)
+                predicted = []
+                kernel_string = 'k=' + str(k) + ' contam=' + str(contamination)
+                # for x in X_train:
+                #     label = model.fit_predict(np.append(X_train, x.reshape(1, -1), axis=0))[-1]
+                #     predicted.append(label)
+
+                for an in X_val:
+                    label = model.fit_predict(np.append(X_train, an.reshape(1, -1), axis=0))[-1]
+                    predicted.append(label)
+
+                predicted = np.array(predicted)
+                true_positive, false_positive, true_negative, false_negative = \
+                    get_evaluation_matrix(labels=validation_labels, predicted=predicted)
+
+                precision, recall, accuracy = compute_precision_recall_accuracy(true_positive=true_positive,
+                                                                                true_negative=true_negative,
+                                                                                false_positive=false_positive,
+                                                                                false_negative=false_negative)
+                experiment_results.loc[(kernel_string, 'tp'), feature_name] = true_positive
+                experiment_results.loc[(kernel_string, 'fp'), feature_name] = false_positive
+                experiment_results.loc[(kernel_string, 'tn'), feature_name] = true_negative
+                experiment_results.loc[(kernel_string, 'fn'), feature_name] = false_negative
+                experiment_results.loc[(kernel_string, 'precision'), feature_name] = precision
+                experiment_results.loc[(kernel_string, 'recall'), feature_name] = recall
+                experiment_results.loc[(kernel_string, 'accuracy'), feature_name] = accuracy
+                experiment_results.loc[(kernel_string, 'FPR'), feature_name] = false_positive / (
+                        false_positive + true_negative)
+                experiment_results.loc[(kernel_string, 'TPR'), feature_name] = true_positive / (
+                        true_positive + false_negative)
+    return experiment_results
 
 
 def _ocvsm_param_search(train_data, validation_data, validation_labels):
     print('Param search')
-    parameters = {'gamma': np.logspace(-9, 3, 13), 'nu': np.linspace(0.01, 0.99, 99)}
+    parameters = {'gamma': np.logspace(-9, -1, 6), 'nu': np.linspace(0.01, 0.45, 45)}
     experiment_results = pd.DataFrame(columns=['parameters', 'evaluation'] + global_features)
     experiment_results.set_index(['parameters', 'evaluation'], inplace=True)
 
@@ -131,11 +164,11 @@ def _select_params_from_results(experiment_results):
     return model_params
 
 
-def _train_ocsvm(train, params):
+def _train_models(train, params, model):
     models = {}
     for feature_name in global_features:
         z = params[feature_name]
-        svm = OneClassSVM().set_params(**z)
+        svm = model.set_params(**z)
         X_train = train[feature_name]
         svm.fit(X_train)
         models[feature_name] = svm
@@ -219,10 +252,17 @@ def train(normal_data, malware_data, features, algorithm='OCSVM', params=None, v
             experiment_results = _ocvsm_param_search(X_train, X_val, validation_labels)
             params = _select_params_from_results(experiment_results)
 
-        models = _train_ocsvm(X_train, params)
+        models = _train_models(X_train, params)
         if validate:
             test_models(X_test, test_labels, models)
-        return params, models
+        return params, models, scalers
+    elif algorithm == 'LOF':
+        if not params:
+            experiment_results = _lof_param_search(X_train, X_val, validation_labels)
+            params = _select_params_from_results(experiment_results)
+        models = _train_models(X_train, params, LocalOutlierFactor())
+        return params, models, scalers  # code repetition. fix it
+
     else:
         raise NotImplementedError('Available algorithms: [OCSVM, LOF]')
 
@@ -234,6 +274,16 @@ def _save_models(models, folder):
         path = f'{folder}/{feature}_model.pkl'
         with open(path, 'wb') as f:
             pickle.dump(model, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def _save_scalers(scalers, base_folder):
+    folder = base_folder + '/scalers'
+    if not os.path.isdir(folder):
+        os.makedirs(folder)
+    for feature, scaler in scalers.items():
+        path = f'{folder}/{feature}_scaler.pkl'
+        with open(path, 'wb') as f:
+            pickle.dump(scaler, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 if __name__ == '__main__':
@@ -249,10 +299,12 @@ if __name__ == '__main__':
     if parameters.params:
         with open(parameters.params, 'r') as f:
             model_params = json.load(f)
-    params, models = train(normal_training, malware_data, features=global_features, params=model_params, validate=False)
-    save_params = False
+    params, models, scalers = train(normal_training, malware_data, features=global_features, params=model_params,
+                                    validate=True, algorithm=parameters.algorithm)
+    save_params = True
     if save_params:
         with open(f'{parameters.models_path}/params.json', 'w') as f:
             json.dump(params, f)
 
     _save_models(models, parameters.models_path)
+    _save_scalers(scalers, parameters.models_path)
