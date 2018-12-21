@@ -369,8 +369,7 @@ def humanreadabledump(obj):
 
 
 if __name__ == "__main__":
-    parameters = parser_data_gathering\
-        .parse_args(sys.argv[1:])
+    parameters = parser_data_gathering.parse_args(sys.argv[1:])
 
     ips = load_computers_to_analyze_from_file(parameters)
     intialize_computers_to_analyze(ips)
