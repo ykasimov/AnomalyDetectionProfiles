@@ -1,5 +1,7 @@
 import json
+import pickle
 import numpy as np
+from features import global_features
 
 
 def create_features(histogram):
@@ -24,18 +26,19 @@ def create_features(histogram):
     return np.array(features_func)
 
 
-def get_data(file, feature_names):
+def get_data(file, feature_names, data=None):
     def create_date(day, time_window):
         time_window_parts = time_window.split(' ')
         padding_zero = ''
-        if len(time_window_parts[1])<2:
+        if len(time_window_parts[1]) < 2:
             padding_zero = '0'
         return (f'{day} {time_window_parts[0]}:'
                 f'{padding_zero}'
                 f'{int(time_window_parts[1])*5}:00')
 
-    with open(file, 'r') as f:
-        data = json.load(f)
+    if not data:
+        with open(file, 'r') as f:
+            data = json.load(f)
     ip = list(data.keys())[0]
     profile = data[ip]['time']
     features_per_feature = {feat: [] for feat in feature_names}
@@ -66,3 +69,36 @@ def majority_voting(predictions):
     #
     majority_voting[majority_voting <= 0] = -1
     return majority_voting
+
+
+def load_models(folder):
+    models = {}
+    for feature_name in global_features:
+        path = f'{folder}/{feature_name}_model.pkl'
+        with open(path, 'rb') as f:
+            models[feature_name] = pickle.load(f).set_params(novelty=True)
+
+    return models
+
+
+def load_scalers(base_folder):
+    folder = base_folder + '/scalers'
+    scalers = {}
+    for feature_name in global_features:
+        path = f'{folder}/{feature_name}_scaler.pkl'
+        with open(path, 'rb') as f:
+            scalers[feature_name] = pickle.load(f)
+    return scalers
+
+
+def report(predictions, scores, dates):
+    output_dict = {}
+    for pred, score, feat in zip(predictions, scores, global_features):
+        idx = np.where(pred == -1)[0]
+        anomalous_windows = [dates[i] for i in idx]
+        scores_windows = [score[i] for i in idx]
+        for w, s in zip(anomalous_windows, scores_windows):
+            tmp_list = output_dict.get(w, [])
+            tmp_list.append(f'{feat} : {s}')
+            output_dict[w] = tmp_list
+    return output_dict

@@ -141,7 +141,6 @@ def addFeaturesForIP(clientorserver, ipDict, ipTarget, lineDict, dur, protocol, 
         # ipFeaturesTemp['clientDictIPSContacted'].add (ipTo)
         # addFeaturesToDict (ipFeaturesTemp, 'clientDictIPSContacted', ipTarget, 1)
 
-
         classB = ipTarget.split('.')[0] + '.' + ipTarget.split('.')[1]
         addFeaturesToDict(ipFeaturesTemp, clientorserver + 'DictClassBnetworksEstablished', classB, 1)
         ipFeaturesTemp['hoursummary'][clientorserver + 'TotalNumberOfTransferedDataEstablished'] = \
@@ -366,6 +365,15 @@ def humanreadabledump(obj):
         return str(list(obj))
         # return ','.join(filter(None, list (obj)))
     return obj.__dict__
+
+
+def create_profiles(ip, file, file_name, save=False):
+    intialize_computers_to_analyze(ip)
+    gatherData(file)
+    if save:
+        with open(file_name, 'w') as fp:
+            json.dump(result, fp, default=dumper)
+    return result
 
 
 if __name__ == "__main__":

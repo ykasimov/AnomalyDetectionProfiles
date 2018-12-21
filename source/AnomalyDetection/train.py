@@ -1,15 +1,15 @@
-import numpy as np
-from argument_parser import parser_training
+import os
 import sys
 import json
+import pickle
+import numpy as np
+import pandas as pd
+from sklearn.svm import OneClassSVM
 from features import global_features
+from argument_parser import parser_training
+from sklearn.neighbors import LocalOutlierFactor
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split, ParameterGrid
-from sklearn.svm import OneClassSVM
-from sklearn.neighbors import LocalOutlierFactor
-import pandas as pd
-import pickle
-import os
 from utils import get_data, get_evaluation_matrix, majority_voting
 
 
@@ -70,9 +70,10 @@ def _lof_param_search(train_data, validation_data, validation_labels):
         X_val = validation_data[feature_name]
         for k in range(1, 11):
             for contamination in np.linspace(0.01, 0.1, 50):
-                model = LocalOutlierFactor(n_neighbors=k, contamination=contamination, n_jobs=-1)
+                model = LocalOutlierFactor(n_neighbors=k, contamination=contamination, n_jobs=-1, novelty=True)
                 predicted = []
-                kernel_string = 'k=' + str(k) + ' contam=' + str(contamination)
+                # kernel_string = 'k=' + str(k) + ' contam=' + str(contamination)
+                kernel_string = f'k={k} contam={contamination}'
                 # for x in X_train:
                 #     label = model.fit_predict(np.append(X_train, x.reshape(1, -1), axis=0))[-1]
                 #     predicted.append(label)
@@ -234,7 +235,7 @@ def test_models(test_data, label_test, models):
     print(f'Ensemble evaluation\nFPR ensemble: {fpr}\nTPR ensebmle: {tpr}')
 
 
-def train(normal_data, malware_data, features, algorithm='OCSVM', params=None, validate=False):
+def _train(normal_data, malware_data, features, algorithm='OCSVM', params=None, validate=False):
     train_data, validation, test = split_train_validation_test(normal_data, malware_data, features)
     X_train = train_data[0]
     X_val = validation[0]
@@ -260,7 +261,7 @@ def train(normal_data, malware_data, features, algorithm='OCSVM', params=None, v
         if not params:
             experiment_results = _lof_param_search(X_train, X_val, validation_labels)
             params = _select_params_from_results(experiment_results)
-        models = _train_models(X_train, params, LocalOutlierFactor())
+        models = _train_models(X_train, params, LocalOutlierFactor(novelty=True))
         return params, models, scalers  # code repetition. fix it
 
     else:
@@ -286,21 +287,40 @@ def _save_scalers(scalers, base_folder):
             pickle.dump(scaler, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-if __name__ == '__main__':
-    import time
-
-    time.sleep(5)
-    parameters = parser_training.parse_args(sys.argv[1:])
-    normal_training = get_data(parameters.normal_data, feature_names=global_features)
+def train(parameters, train_data=None, validation_data=None):
+    normal_training, _ = get_data(parameters.train_file, feature_names=global_features, data=train_data)
     print('normal data are prepared')
-    malware_data = get_data(parameters.validation_data, feature_names=global_features)
+    malware_data, _ = get_data(parameters.validation_file, feature_names=global_features, data=validation_data)
     print('mixed data are prepared')
     model_params = None
     if parameters.params:
         with open(parameters.params, 'r') as f:
             model_params = json.load(f)
-    params, models, scalers = train(normal_training, malware_data, features=global_features, params=model_params,
-                                    validate=True, algorithm=parameters.algorithm)
+    params, models, scalers = _train(normal_training, malware_data, features=global_features, params=model_params,
+                                     validate=parameters.validate, algorithm=parameters.algorithm)
+    save_params = True
+    if save_params:
+        with open(f'{parameters.models_path}/params.json', 'w') as f:
+            json.dump(params, f)
+
+    _save_models(models, parameters.models_path)
+    _save_scalers(scalers, parameters.models_path)
+    return models, scalers
+
+
+if __name__ == '__main__':
+
+    parameters = parser_training.parse_args(sys.argv[1:])
+    normal_training, _ = get_data(parameters.normal_data, feature_names=global_features)
+    print('normal data are prepared')
+    malware_data, _ = get_data(parameters.validation_data, feature_names=global_features)
+    print('mixed data are prepared')
+    model_params = None
+    if parameters.params:
+        with open(parameters.params, 'r') as f:
+            model_params = json.load(f)
+    params, models, scalers = _train(normal_training, malware_data, features=global_features, params=model_params,
+                                     validate=parameters.validate, algorithm=parameters.algorithm)
     save_params = True
     if save_params:
         with open(f'{parameters.models_path}/params.json', 'w') as f:
