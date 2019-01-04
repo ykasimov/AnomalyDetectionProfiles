@@ -17,7 +17,6 @@ if __name__ == '__main__':
                                                        parameters.validation_file,
                                                        parameters.file_to_save + '_validation')
 
-
         models, scalers = train.train(parameters, profiles_train, profiles_validation)
     else:
         models = utils.load_models(parameters.models)
